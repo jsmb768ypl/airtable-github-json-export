@@ -47,11 +47,11 @@ To fill all these variables:
 - Airtable base id: go to https://airtable.com/api, click on your database, and
   search for "The ID of this base is appFyez....x9V."
 
-## Run
+## Run
 
 Run the export with `node airtable-export.js`
 
-## Heroku
+## Heroku
 
 You can run this as a scheduled task on Heroku using the deploy button below
 (note that Heroku might
