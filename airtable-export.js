@@ -1,14 +1,10 @@
-var Airtable = require('airtable')
-var parallel = require('run-parallel')
-var Hubfs = require('hubfs.js')
-var geojsonhint = require('@mapbox/geojsonhint')
-var deepEqual = require('deep-equal')
-var rewind = require('geojson-rewind')
-var debug = require('debug')('airtable-github-export')
+const stringify = require('json-stable-stringify')
+const Airtable = require('airtable')
+const { Octokit } = require('@octokit/rest')
 
 require('dotenv').config()
 
-var config = {
+const config = {
   tables: process.env.TABLES.split(','),
   githubToken: process.env.GITHUB_TOKEN,
   repo: process.env.GITHUB_REPO,
@@ -19,142 +15,68 @@ var config = {
   filename: process.env.GITHUB_FILENAME || 'data.json'
 }
 
-var CREATE_MESSAGE = '[AIRTABLE-GITHUB-EXPORT] create ' + config.filename
-var UPDATE_MESSAGE = '[AIRTABLE-GITHUB-EXPORT] update ' + config.filename
+const CREATE_MESSAGE = 'Create dump'
+const UPDATE_MESSAGE = 'Update dump (if something has changed)'
 
-var hubfsOptions = {
-  owner: config.owner,
-  repo: config.repo,
-  auth: {
-    token: config.githubToken
-  }
-}
+const octokit = Octokit({
+  auth: config.githubToken
+})
 
-var gh = Hubfs(hubfsOptions)
+const base = new Airtable({apiKey: config.airtableToken}).base(config.base)
 
-var base = new Airtable({apiKey: config.airtableToken}).base(config.base)
-
-var output = {}
-
-var tasks = config.tables.map(function (tableName) {
-  return function (cb) {
-    var data = []
-    // Ensure properties of output are set in the same order
-    // otherwise they are set async and may change order, which
-    // results in unhelpful diffs in Github
-    output[tableName] = null
+const tasks = config.tables.map(tableName => {
+  return new Promise((resolve, reject) => {
+    const data = []
 
     base(tableName).select().eachPage(page, done)
 
     function page (records, next) {
       // This function will get called for each page of records.
-      records.forEach(function (record) {
-        var feature = {
-          type: 'Feature',
-          id: record._rawJson.id,
-          properties: record._rawJson.fields || {}
-        }
-        var geometry = parseGeometry(get(record, 'geometry'))
-        var coords = parseCoords([get(record, 'lon'), get(record, 'lat')])
-        if (geometry) {
-          feature.geometry = geometry
-          delete feature.properties.geometry
-          delete feature.properties.Geometry
-        } else if (coords) {
-          feature.geometry = {
-            type: 'Point',
-            coordinates: coords
-          }
-        } else {
-          feature.geometry = null
-        }
-        data.push(feature)
-      })
+      for (const record of records) {
+        data.push({
+          ...record._rawJson.fields,
+          airtableId: record._rawJson.id
+        })
+      }
       next()
     }
 
     function done (err) {
-      if (err) return cb(err)
-      var featureCollection = {
-        type: 'FeatureCollection',
-        features: data
-      }
-      output[tableName] = featureCollection
-      cb()
+      if (err) reject(err)
+      resolve({table: tableName, data})
     }
-  }
-})
-
-parallel(tasks, function (err, result) {
-  if (err) return onError(err)
-  gh.readFile(config.filename, {ref: config.branches[0]}, function (err, data) {
-    if (err) {
-      if (!(/not found/i.test(err) || err.notFound)) {
-        return onError(err)
-      }
-    } else {
-      data = JSON.parse(data)
-    }
-    if (data && deepEqual(data, output)) {
-      return debug('No changes from Airtable, skipping update to Github')
-    }
-    var message = data ? UPDATE_MESSAGE : CREATE_MESSAGE
-    ghWrite(config.filename, output, config.branches, message, function (err) {
-      if (err) return onError(err)
-      debug('Updated ' + config.owner + '/' + config.repo + '/' + config.filename +
-        ' with latest changes from Airtable')
-    })
   })
 })
 
-function ghWrite (filename, data, branches, message, cb) {
-  var pending = branches.length
-  branches.forEach(function (branch) {
-    var opts = {
-      message: message,
-      branch: branch
-    }
-    gh.writeFile(filename, JSON.stringify(data, null, 2), opts, done)
-  })
-  function done (err) {
-    if (err) return cb(err)
-    if (--pending > 0) return
-    cb()
+Promise.all(tasks).then(results => results.reduce((tables, result) => {
+  tables[result.table] = result.data
+  return tables
+}, {})).catch(err => console.error(err)).then(tables => {
+  // Use json-stable-stringify to ensure the JSON to be the same, even if the order has changed
+  const json = stringify(tables, { space: 2})
+  return updateOrCreate(json)
+}).then(() => {
+  console.log(`Successful. See https://github.com/${config.owner}/${config.repo}/`)
+}).catch(err => { console.error('Error during Airtable dump to Github', err) })
+
+const updateOrCreate = (text) => octokit.repos.getContents({
+  owner: config.owner,
+  repo: config.repo,
+  path: config.filename
+}).catch(err => {
+  if (err.status !== 404) {
+    throw new Error(err)
+  } // else: it's ok
+}).then(result => {
+  const createParams = {
+    owner: config.owner,
+    repo: config.repo,
+    path: config.filename,
+    message: CREATE_MESSAGE,
+    content: Buffer.from(text, 'utf-8').toString('base64')
   }
-}
+  const updateParams = (result && result.data && result.data.sha) ?
+    {sha: result.data.sha, message: UPDATE_MESSAGE} : {}
 
-function onError (err) {
-  console.error(err)
-  process.exit(1)
-}
-
-// Case insensitive record.get
-function get (record, fieldName) {
-  if (typeof record.get(fieldName) !== 'undefined') {
-    return record.get(fieldName)
-  } else if (typeof record.get(fieldName.charAt(0).toUpperCase() + fieldName.slice(1)) !== 'undefined') {
-    return record.get(fieldName.charAt(0).toUpperCase() + fieldName.slice(1))
-  } else if (typeof record.get(fieldName.toUpperCase()) !== 'undefined') {
-    return record.get(fieldName.toUpperCase())
-  }
-}
-
-// Try to parse a geometry field if it is valid GeoJSON geometry
-function parseGeometry (geom) {
-  if (!geom) return null
-  try {
-    geom = rewind(JSON.parse(geom))
-  } catch (e) {
-    return null
-  }
-  var errors = geojsonhint.hint(geom)
-  if (errors && errors.length) return null
-  return geom
-}
-
-// Check whether coordinates are valid
-function parseCoords (coords) {
-  if (typeof coords[0] !== 'number' || typeof coords[1] !== 'number') return null
-  if (coords[0] < -180 || coords[0] > 180 || coords[1] < -90 || coords[1] > 90) return null
-  return coords
-}
+  return octokit.repos.createOrUpdateFile({...createParams, ...updateParams})
+})

@@ -1,30 +1,19 @@
 {
-  "name": "Airtable Github Export",
-  "description": "Export airtable tables to json/geojson in Github",
-  "keywords": [
-    "airtable",
-    "maps",
-    "github",
-    "export"
-  ],
+  "name": "Airtable Github JSON Export",
+  "description": "Export airtable tables to json in Github",
+  "keywords": ["airtable", "github", "json", "export"],
   "formation": {
     "web": {
       "quantity": 0
     }
   },
-  "addons": [
-    "scheduler:standard"
-  ],
+  "addons": ["scheduler:standard"],
   "env": {
     "AIRTABLE_API_KEY": {
       "description": "Airtable API key https://airtable.com/account"
     },
     "AIRTABLE_BASE_ID": {
       "description": "Airtable base ID, from the API page for your base https://airtable.com/api"
-    },
-    "GITHUB_BRANCH": {
-      "description": "Github branch to save your data (default master)",
-      "value": "master"
     },
     "GITHUB_FILENAME": {
       "description": "Filename and path for output file on Github",
