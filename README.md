@@ -69,7 +69,3 @@ preference.
 PRs accepted.
 
 See also the upstream repo: https://github.com/digidem/airtable-github-export.
-
-## License
-
-MIT © Digital Democracy
