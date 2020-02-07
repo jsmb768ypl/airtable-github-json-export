@@ -19,7 +19,7 @@ file on Github. The exported file will be of the format:
 This repository is heavily inspired by
 https://github.com/digidem/airtable-github-export.
 
-## Usage
+## Configuration
 
 The script depends on several environment variables which you can set a `.env`
 file if you run this locally:
@@ -47,10 +47,15 @@ To fill all these variables:
 - Airtable base id: go to https://airtable.com/api, click on your database, and
   search for "The ID of this base is appFyez....x9V."
 
+## Run
+
 Run the export with `node airtable-export.js`
 
-We run this as a scheduled task on Heroku, and you can do the same by using the
-deploy button below:
+## Heroku
+
+You can run this as a scheduled task on Heroku using the deploy button below
+(note that Heroku might
+[charge you](https://devcenter.heroku.com/articles/scheduler)):
 
 [![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy)
 
